@@ -1,0 +1,176 @@
+---
+title: "Distributional Regression Illustration"
+author: "Tim Wolock"
+date: "05/03/2021"
+output:
+  html_document:
+    toc: true
+    number_sections: false
+    toc_float: true
+    df_print: "tibble"
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE, message = F, warning = F,
+               fig.align = 'center', fig.height = 3)
+```
+
+In this document, which accompanies Wolock *et al.* (2021), we will demonstrate how to fit a distributional model with a sinh-arcsinh likelihood in `brms` [@bürkner2018]. First, we will outline how to implement a custom family in `brms`, then we will simulate sinh-arcsinh distributed data with moments that vary with data, and finally, we will fit one conventional regression model and two distributional models.
+
+The likelihood we will be using comes from @jones2009. The density of a sinh-arcsinh random variable, $X$, is
+
+$$
+p(x\;|\;\mu, \sigma, \epsilon, \delta) = \frac{1}{\sigma\sqrt{2\pi}}\frac{\delta C_{\epsilon, \delta}(x_z)}{\sqrt{1+x_z^2}} \exp\left[-\frac{S_{\epsilon,\delta}(x_z)^2}{2}\right],
+$$
+
+where $x_z = (x-\mu)/\sigma$, $S_{\epsilon,\delta}(x) = \sinh(\epsilon + \delta\mathrm{asinh}(x))$, and $C_{\epsilon,\delta}=\cosh(\epsilon + \delta\mathrm{asinh}(x))$. Both $\sigma$ and $\delta$ must be greater than zero. This distribution is considerably more flexible than the normal distribution.
+
+## Setup
+
+To step through this analysis yourself, clone or download this repository, open `distreg-illustration.Rproj` in RStudio, and open the `.Rmd` file in the RStudio editor. Be sure to have the following package installed:
+
+1.  `rstan`
+2.  `brms`
+3.  `data.table`
+4.  `ggplot2`
+
+First, we will load these required packages and configure some useful options.
+
+```{r options, include=T, results='hide', message=F, warning=F}
+library(rstan)
+library(brms)
+library(data.table)
+library(ggplot2)
+
+set.seed(10)
+options(mc.cores = parallel::detectCores())
+theme_set(theme_bw())
+```
+
+Now, we will load the functions necessary to fit a custom family in `brms`.
+
+```{r stan_funs, include=T}
+source('R/stan_funs.R')
+stanvars <- stanvar(scode = stan_funs, block = "functions")
+```
+
+This `.R` file loads a `brms` family, two functions, and a string containing Stan functions into the global environment. The custom family, `sinhasinh`, will allow us to fit a model in `brms` with a likelihood that is not included in `brms` by default. It is defined as
+
+```{r sinhFamily, eval=F}
+sinhasinh <- custom_family(
+  name = "sinhasinh",
+  dpars = c("mu", "sigma", "eps", "delta"),
+  links = c("identity", "log", "identity", "log"),
+  lb = c(NA, NA, NA, NA),
+  type = "real"
+)
+```
+
+In the `dpars` argument, we are defining the names of the parameters of custom family. Note that every custom family in `brms` must have "mu" as its first distributional parameter. With `links`, we are defining the link functions for the linear models for each distributional parameter: both $\sigma$ and $\delta$ must be greater than zero, so we assign them `log` link functions. The `lb` argument sets the lower bounds of each parameter, and the `type` argument defines the support of the distribution.
+
+The R script we ran also adds two functions to the global environment:
+
+1.  `log_lik_sinhasinh`: allows `brms` to calculate the log-likelihood of the sinh-arcsinh distribution using Stan functions that we will expose later on.
+2.  `predict_sinhasinh`: allows `brms` to sample from the sinh-arcsinh distribution similarly using exposed functions from Stan.
+
+Both of these functions are named in accordance with `brms` convention (`log_lik_FAMILYNAME` and `predict_FAMILYNAME`) so that we will be able to use the posterior prediction and checking tools built-in to the package.
+
+Finally, the script sets a string called `stan_funs` in the global environment. This string contains two Stan functions, `sinhasinh_lpdf` and `sinhasinh_rng`, which allows to calculate the sinh-arcsinh log-density and take sinh-arcsinh samples, respectively. The log-density function with that particular name is required for the custom family to work. We will expose both functions to R after fitting the first model, and the two R functions defined above will wrap them.
+
+For convenience, we also define a native R function to produce sinh-arcsinh samples.
+
+```{r sinhSampler}
+rsinhasinh <- function(n, mu = 0, sigma = 1, eps = 0, delta = 1) {
+  mu + sigma * sinh((asinh(rnorm(n, 0, 1)) - eps) / delta)
+}
+```
+
+## Simulated Data
+
+We will generate sinh-arcsinh distributed data with moments that vary with data to fit to. First, we define the population of interest.
+
+```{r definePop, results='asis'}
+N <- 300
+ages <- round(runif(N, 15, 64))
+pct_f <- 0.6
+sexes <- c('Male', 'Female')[rbinom(N, 1, pct_f) + 1]
+
+# Load everything into a dataframe
+age_df <- data.frame(age = ages, sex = sexes, id = 1:N)
+age_df$scaled_age <- (ages - mean(ages)) / sd(ages)
+age_df$sex <- relevel(factor(age_df$sex), ref = 'Female')
+age_df$age_bin <- with(age_df, age - age %% 5)
+```
+
+Now we will use distribution regression coefficients from Wolock (2021) to predict distributional parameters for each individual. These coefficients come from a model with linear age-sex interactions for all four parameters, so we need to be sure to define the model matrix in the same way.
+
+```{r predictParams}
+# Hard-coded coefficients from paper
+B_mu <- c(0.1, -0.02, -0.18, 0.01)
+B_sigma <- c(-2.44, -0.11, 0.00, 0.26)
+B_eps <- c(-0.2, 0.01, 0.36, 0.06)
+B_delta <- c(-0.46, -0.05, 0.01, 0.04)
+
+# Create model matrix for simulating data
+X <- model.matrix(id ~ scaled_age * sex, data = age_df)
+
+# Get true distributional parameter values
+age_df$mu <- X %*% B_mu
+age_df$delta <- exp(X %*% B_delta)
+age_df$sigma <- exp(X %*% B_sigma) * age_df$delta
+age_df$eps <- X %*% B_eps
+```
+
+With all four distributional parameters in hand for every individual, we can sample sinh-arcsinh distributed outcomes. In this case, the dependent variable of the model those coefficients are associated with the log-ratio of partner's age to respondent's age.
+
+```{r simOutcome}
+# Sample with function we defined earlier
+age_df$log_ratio <- with(age_df, rsinhasinh(N, mu, sigma, eps, delta))
+# Calculate partner age
+age_df$p_age <- round(exp(age_df$log_ratio) * age_df$age)
+```
+
+We can plot the resulting distribution for several five-year age bins by sex.
+
+```{r simHist, echo=F, fig.height=4}
+ggplot(age_df[age_df$age_bin %in% c(20, 25, 30),],
+       aes(x = p_age)) +
+  geom_bar() +
+  facet_grid(sex ~ age_bin, scales='free_y') +
+  coord_cartesian(expand = 0) +
+  labs(x = 'Partner age', y = 'Number of observations')
+```
+
+## Fitting Models
+
+Now, we will fit three models in `brms`:
+
+1.  **Conventional:** regression with linear age-sex interaction for the location parameter and constant higher-order parameters
+2.  **Distributional 1:** distributional regression with linear age-sex interaction for location and independent age and sex effects for higher-order parameters
+3.  **Distributional 2:** distributional regression with linear age-sex interactions for all four parameters
+
+### Conventional Regression
+
+First, we fit the conventional model. We use the `bf` function to build a `brms` formula with models for all four distributional parameters in the `sinhasinh` family. Note that we use the first formula (corresponding to `mu`) to set the outcome variable. We include the `stanvars` object defined by `R/stan_funs.R` in the model using the `stanvars` argument of `brm`. (*This cell will take substantially longer to run than the previous ones because the `brm` function compiles a Stan model and performs sampling with HMC.)*
+
+```{r convBRM, results='hide'}
+bf_1 <- bf(
+  log_ratio ~ scaled_age * sex,
+  sigma ~ 1,
+  eps ~ 1,
+  delta ~ 1
+)
+
+brm_1 <- brm(formula = bf_1,
+             data = age_df,
+             family = sinhasinh,
+             stanvars = stanvars)
+```
+
+```{r brm1PostSummary}
+kable(posterior_summary(brm_1), digits = 2)
+```
+
+## References
