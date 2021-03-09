@@ -47,7 +47,7 @@ library(rstan)
 library(data.table)
 library(ggplot2)
 
-set.seed(404)
+set.seed(1)
 options(mc.cores = parallel::detectCores())
 theme_set(theme_bw())
 ```
@@ -337,7 +337,35 @@ dpar_l <- lapply(c('mu', 'sigma', 'eps', 'delta'), function(d) {
 names(dpar_l) <- c('mu', 'sigma', 'eps', 'delta')
 
 dpar_df <- data.frame(rbindlist(lapply(dpar_l, rbindlist, idcol = 'Model'), idcol = 'dpar'))
+dpar_df$dpar <- factor(dpar_df$dpar, levels = c('mu', 'sigma', 'eps', 'delta'))
 ```
 
+We can plot the posterior CIs to see the effects of adding distributional models.
+
+```{r dparPlot, fig.height=6}
+ggplot(dpar_df,
+       aes(x = age,
+           ymin = `X2.5.`,
+           y = `X50.`,
+           ymax = `X97.5.`,
+           fill = sex,
+           color = sex)) +
+  geom_ribbon(alpha=0.3, color=NA) +
+  geom_line() + 
+  labs(x=NULL, y=NULL) +
+  coord_cartesian(expand = 0) +
+  facet_grid(dpar ~ Model, scales='free') + 
+  theme_bw() + theme(legend.position = 'bottom')
+```
+From here, we should be able to use any further `brms` processing tools we would like to.
 
 ## References
+
+<div id="refs"></div>
+
+## Session Info
+
+```{r sessionInfo, echo=F}
+sessionInfo()
+```
+
