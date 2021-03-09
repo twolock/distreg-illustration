@@ -3,17 +3,18 @@ title: "Distributional Regression Illustration"
 author: "Tim Wolock"
 date: "05/03/2021"
 output:
-  html_document:
+  bookdown::html_document2:
     toc: true
     number_sections: false
     toc_float: true
-    df_print: "tibble"
 bibliography: references.bib
 ---
 
 ```{r setup, include=FALSE}
 library(knitr)
+library(kableExtra)
 opts_chunk$set(echo = TRUE, message = F, warning = F,
+               error = F,
                fig.align = 'center', fig.height = 3)
 ```
 
@@ -25,7 +26,7 @@ $$
 p(x\;|\;\mu, \sigma, \epsilon, \delta) = \frac{1}{\sigma\sqrt{2\pi}}\frac{\delta C_{\epsilon, \delta}(x_z)}{\sqrt{1+x_z^2}} \exp\left[-\frac{S_{\epsilon,\delta}(x_z)^2}{2}\right],
 $$
 
-where $x_z = (x-\mu)/\sigma$, $S_{\epsilon,\delta}(x) = \sinh(\epsilon + \delta\mathrm{asinh}(x))$, and $C_{\epsilon,\delta}=\cosh(\epsilon + \delta\mathrm{asinh}(x))$. Both $\sigma$ and $\delta$ must be greater than zero. This distribution is considerably more flexible than the normal distribution.
+where $x_z = (x-\mu)/\sigma$, $S_{\epsilon,\delta}(x) = \sinh(\epsilon + \delta\mathrm{asinh}(x))$, and $C_{\epsilon,\delta}=\cosh(\epsilon + \delta\mathrm{asinh}(x))$. As expected, $\mu$ and $\sigma$ control the location and scale of the distribution. Both $\sigma$ and $\delta$ must be greater than zero.
 
 ## Setup
 
@@ -36,15 +37,17 @@ To step through this analysis yourself, clone or download this repository, open 
 3.  `data.table`
 4.  `ggplot2`
 
+`data.table` is not strictly necessary for the analysis, but it will be useful when constructing posterior summaries.
+
 First, we will load these required packages and configure some useful options.
 
 ```{r options, include=T, results='hide', message=F, warning=F}
-library(rstan)
 library(brms)
+library(rstan)
 library(data.table)
 library(ggplot2)
 
-set.seed(10)
+set.seed(404)
 options(mc.cores = parallel::detectCores())
 theme_set(theme_bw())
 ```
@@ -73,7 +76,7 @@ In the `dpars` argument, we are defining the names of the parameters of custom f
 The R script we ran also adds two functions to the global environment:
 
 1.  `log_lik_sinhasinh`: allows `brms` to calculate the log-likelihood of the sinh-arcsinh distribution using Stan functions that we will expose later on.
-2.  `predict_sinhasinh`: allows `brms` to sample from the sinh-arcsinh distribution similarly using exposed functions from Stan.
+2.  `posterior_predict_sinhasinh`: allows `brms` to sample from the sinh-arcsinh distribution similarly using exposed functions from Stan.
 
 Both of these functions are named in accordance with `brms` convention (`log_lik_FAMILYNAME` and `predict_FAMILYNAME`) so that we will be able to use the posterior prediction and checking tools built-in to the package.
 
@@ -92,7 +95,7 @@ rsinhasinh <- function(n, mu = 0, sigma = 1, eps = 0, delta = 1) {
 We will generate sinh-arcsinh distributed data with moments that vary with data to fit to. First, we define the population of interest.
 
 ```{r definePop, results='asis'}
-N <- 300
+N <- 5000
 ages <- round(runif(N, 15, 64))
 pct_f <- 0.6
 sexes <- c('Male', 'Female')[rbinom(N, 1, pct_f) + 1]
@@ -153,7 +156,7 @@ Now, we will fit three models in `brms`:
 
 ### Conventional Regression
 
-First, we fit the conventional model. We use the `bf` function to build a `brms` formula with models for all four distributional parameters in the `sinhasinh` family. Note that we use the first formula (corresponding to `mu`) to set the outcome variable. We include the `stanvars` object defined by `R/stan_funs.R` in the model using the `stanvars` argument of `brm`. (*This cell will take substantially longer to run than the previous ones because the `brm` function compiles a Stan model and performs sampling with HMC.)*
+First, we fit the conventional model. We use the `bf` function to build a `brms` formula with models for all four distributional parameters in the `sinhasinh` family. Note that we use the first formula (corresponding to `mu`) to set the outcome variable. We include the `stanvars` object defined by `R/stan_funs.R` in the model using the `stanvars` argument of `brm`.
 
 ```{r convBRM, results='hide'}
 bf_1 <- bf(
@@ -169,8 +172,172 @@ brm_1 <- brm(formula = bf_1,
              stanvars = stanvars)
 ```
 
-```{r brm1PostSummary}
-kable(posterior_summary(brm_1), digits = 2)
+```{r brm1PostSummary, results='asis'}
+kbl(posterior_summary(brm_1), digits = 2) %>%
+    kable_styling(c("striped"))
 ```
+
+Because of our slightly unconventional specification for the last three parameters, `brm` returns estimates for `b_Intercept` parameters for all four distributional parameters.
+
+The R functions we defined in `R/stan_funs.R` give us what we need to use the posterior checking tools built into `brms`. We just need to expose the Stan functions that the R functions rely on.
+
+```{r exposeFns, results='hide', error=F, warning=F, message=F}
+expose_functions(brm_1, vectorize = T, show_compiler_warnings=F)
+```
+
+### Distributional Regression 1
+
+To fit a distributional model in `brms`, we just modify the `bf` formula.
+
+```{r distBRM1, results='hide'}
+bf_2 <- bf(
+  log_ratio ~ scaled_age * sex,
+  sigma ~ scaled_age + sex,
+  eps ~ scaled_age + sex,
+  delta ~ scaled_age + sex
+)
+
+brm_2 <- brm(formula = bf_2,
+             data = age_df,
+             family = sinhasinh,
+             stanvars = stanvars)
+```
+
+```{r brm2PostSummary, results='asis'}
+kbl(posterior_summary(brm_2), digits = 2) %>%
+    kable_styling(c("striped"))
+```
+
+We can see that we now have slopes with respect to age and sex for all four distributional parameters.
+
+### Distributional Regression 2
+
+Finally, we fit a distributional model with age-sex interactions for all four distributional parameters, which we know is the correct model.
+
+```{r distBRM2, results='hide'}
+bf_3 <- bf(
+  log_ratio ~ scaled_age * sex,
+  sigma ~ scaled_age * sex,
+  eps ~ scaled_age * sex,
+  delta ~ scaled_age * sex
+)
+
+brm_3 <- brm(formula = bf_3,
+             data = age_df,
+             family = sinhasinh,
+             stanvars = stanvars)
+```
+
+```{r brm3PostSummary, results='asis'}
+kbl(posterior_summary(brm_3), digits = 2) %>%
+    kable_styling(c("striped"))
+```
+
+## Model Comparison
+
+Because we have defined the `log_lik` and `predict` functions `brms` expects, we can use the LOO-CV functions [@vehtari2017] built into the package. Note that this step can be computationally intensive.
+
+```{r loo}
+loo_res <- loo(brm_1, brm_2, brm_3)
+```
+
+This function estimates the expected log-posterior densities (ELPDs) for all three model, as well as the comparison of all three models. We can print a single model's results first.
+
+```{r looBRM1}
+print(loo_res$loos$brm_1)
+```
+
+We can also print the comparison. A negative value of
+
+```{r looDiffs}
+print(loo_res$diffs)
+```
+
+We can see that, when we compare the two distributional models (`brm_2` and `brm_3`) the absolute value of ratio of the ELPD difference to the standard error of the difference is `r sprintf('%0.2f', with(loo_res, abs(diffs[2,'elpd_diff']/diffs[2,'se_diff'])))`, suggesting that the second distributional model is significantly better than the first.
+
+## Posterior Prediction
+
+We can create an evenly spaced `data.frame` to predict over.
+
+```{r predDF}
+pred_df <- merge(15:64, c('Female', 'Male'))
+names(pred_df) <- c('age', 'sex')
+pred_df$scaled_age <- (pred_df$age - mean(ages)) / sd(ages)
+pred_df$sex <- relevel(factor(pred_df$sex), ref = 'Female')
+pred_df$log_ratio <- rep(0, nrow(pred_df))
+pred_df$p_age <- round(exp(pred_df$log_ratio) * pred_df$age)
+```
+
+We put all three fit objects into a list to make prediction slightly easier. When we apply the `prepare_predictions` function to each fit object, `brms` will generate posterior predictive samples.
+
+```{r pred}
+fit_l <- list('Conv' = brm_1,
+              'Dist 1' = brm_2,
+              'Dist 2' = brm_3)
+```
+
+### Posterior Predictive Distributions
+
+We can get posterior predictive samples and construct a `data.frame` for histograms.
+
+```{r getPost}
+posterior_l <- lapply(fit_l, posterior_predict, newdata=pred_df)
+
+# Using data.table for convenience
+post_dt <- rbindlist(lapply(posterior_l, function(x) {
+  melt(cbind(data.table(pred_df), t(x)),
+       id.vars=names(pred_df))}),
+  idcol = 'Model')
+post_dt[, p_age_post := round(exp(value) * age)]
+
+post_hist_dt <- post_dt[, .N, by = .(Model, sex, age, p_age = p_age_post)]
+post_hist_dt[, total_N := sum(N), by=.(Model, sex, age)]
+post_hist_dt[, share := N / total_N]
+
+post_hist_df <- data.frame(post_hist_dt)
+```
+
+We can compare our predictive distributions to the observed distributions.
+
+```{r postPlot, fig.height=4}
+hist_dt <- data.table(age_df)[, .N, by=.(age, sex, p_age)]
+hist_dt[, total_N := sum(N), by=.(age, sex)]
+hist_dt[, share := N / total_N]
+hist_df <- data.frame(hist_dt)
+
+ggplot() + 
+  geom_bar(data = hist_df[hist_df$age %in% c(24, 32, 41),],
+           aes(x = p_age,
+               y = share),
+           stat = 'identity') +
+  geom_step(data = post_hist_df[post_hist_df$age %in% c(24, 32, 41),],
+            aes(x = p_age,
+                y = share),
+            direction = 'hv') +
+  facet_grid(sex ~ age) +
+  coord_cartesian(expand = 0)
+
+```
+
+### Posterior Distributional Parameter Summaries
+
+Now, we will extract estimates of the distributional parameters.
+
+```{r getDpar}
+# Get all dpar predictions
+prediction_l <- lapply(fit_l, prepare_predictions, newdata=pred_df)
+# A data.table-y way to get posterior summaries of dpars
+dpar_l <- lapply(c('mu', 'sigma', 'eps', 'delta'), function(d) {
+  lapply(prediction_l, function(x) {
+    cbind(data.table(pred_df), t(apply(brms:::get_dpar(x, dpar = d), 2,
+                                       quantile,
+                                       probs=c(0.025, 0.5, 0.975))))
+  })
+})
+names(dpar_l) <- c('mu', 'sigma', 'eps', 'delta')
+
+dpar_df <- data.frame(rbindlist(lapply(dpar_l, rbindlist, idcol = 'Model'), idcol = 'dpar'))
+```
+
 
 ## References

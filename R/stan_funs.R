@@ -12,7 +12,8 @@ log_lik_sinhasinh <- function(i, draws) {
   y <- draws$data$Y[i]
   sinhasinh_lpdf(y, mu, sigma, eps, delta)
 }
-predict_sinhasinh <- function(i, draws, ...) {
+
+posterior_predict_sinhasinh <- function(i, draws, ...) {
   mu <- draws$dpars$mu[, i]
   sigma <- draws$dpars$sigma[, i]
   eps <- draws$dpars$eps[, i]
