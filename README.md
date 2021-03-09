@@ -1,4 +1,4 @@
-# distreg-illustration
+# Illustrating Distributional Sinh-arcsinh Regression Models in `brms`
 
 Illustrating how to fit sinh-arcsinh distributional models in `brms`
 
