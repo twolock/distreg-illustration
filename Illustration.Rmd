@@ -310,7 +310,8 @@ ggplot() +
            aes(x = p_age,
                y = share),
            stat = 'identity') +
-  geom_step(data = post_hist_df[post_hist_df$age %in% c(24, 32, 41),],
+  geom_step(data = post_hist_df[post_hist_df$age %in% c(24, 32, 41) &
+                                  post_hist_df$Model == 'Dist 2',],
             aes(x = p_age,
                 y = share),
             direction = 'hv') +

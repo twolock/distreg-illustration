@@ -1,7 +1,5 @@
 # Illustrating Distributional Sinh-arcsinh Regression Models in `brms`
 
-Illustrating how to fit sinh-arcsinh distributional models in `brms`
-
 This repository accompanies Wolock *et al.* (2021). In `Illustration.html`, we provide a short demonstration of fitting a series of increasingly complex distributional models to simulated data using `brms`.
 
 Here, we provide very brief instructions for fitting sinh-arcsinh models.
