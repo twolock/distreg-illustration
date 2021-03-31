@@ -3,10 +3,9 @@ title: "Distributional Regression Illustration"
 author: "Tim Wolock"
 date: "05/03/2021"
 output:
-  bookdown::html_document2:
+  bookdown::pdf_document2:
     toc: true
     number_sections: false
-    toc_float: true
 bibliography: references.bib
 ---
 
@@ -47,7 +46,7 @@ library(rstan)
 library(data.table)
 library(ggplot2)
 
-set.seed(1)
+set.seed(10)
 options(mc.cores = parallel::detectCores())
 theme_set(theme_bw())
 ```
@@ -173,7 +172,7 @@ brm_1 <- brm(formula = bf_1,
 ```
 
 ```{r brm1PostSummary, results='asis'}
-kbl(posterior_summary(brm_1), digits = 2) %>%
+kbl(posterior_summary(brm_1), digits = 2, booktabs = T) %>%
     kable_styling(c("striped"))
 ```
 
@@ -204,7 +203,7 @@ brm_2 <- brm(formula = bf_2,
 ```
 
 ```{r brm2PostSummary, results='asis'}
-kbl(posterior_summary(brm_2), digits = 2) %>%
+kbl(posterior_summary(brm_2), digits = 2, booktabs = T) %>%
     kable_styling(c("striped"))
 ```
 
@@ -229,7 +228,7 @@ brm_3 <- brm(formula = bf_3,
 ```
 
 ```{r brm3PostSummary, results='asis'}
-kbl(posterior_summary(brm_3), digits = 2) %>%
+kbl(posterior_summary(brm_3), digits = 2, booktabs = T) %>%
     kable_styling(c("striped"))
 ```
 
