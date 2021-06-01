@@ -24,7 +24,7 @@ brm_fit <- brm(formula = my_fm,
                stanvars = stanvars)
 ```
 
-And finally, to get access to things like posterior prediction, run this line *after* the call the `brm`.
+And finally, to get access to things like posterior prediction, run this line *after* calling `brm`.
 
 ```{r}
 expose_functions(brm_fit, vectorize = T, show_compiler_warnings=F)
